@@ -1,0 +1,7 @@
+"0","# Set the seed for reproducibility"
+"0","set.seed(123)"
+"0","model_df$label <- as.factor(model_df$label)"
+"0","# Split the data into a training set and a testing set"
+"0","data_split <- initial_split(model_df, prop = 0.7)"
+"0","train_data <- training(data_split)"
+"0","test_data <- testing(data_split)"

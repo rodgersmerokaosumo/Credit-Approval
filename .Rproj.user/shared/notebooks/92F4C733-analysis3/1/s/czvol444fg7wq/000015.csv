@@ -1,0 +1,4 @@
+"0","model_df <- model_df %>%"
+"0","  select(-BIRTH_DATE, -EMPLOYMENT_START_DATE, -account_open_month, -DAYS_BIRTH, -DAYS_EMPLOYED, -FLAG_MOBIL)"
+"0",""
+"0","featureType(model_df)"

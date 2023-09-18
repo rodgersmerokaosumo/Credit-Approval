@@ -1,0 +1,8 @@
+"0","library(lubridate)"
+"0",""
+"0","model_df <- model_df %>%"
+"0","  mutate(BIRTH_DATE = as.Date(""2020-01-01"") + days(DAYS_BIRTH),"
+"0","         DAYS_EMPLOYED = ifelse(DAYS_EMPLOYED > 0, 31, DAYS_EMPLOYED),"
+"0","         EMPLOYMENT_START_DATE = as.Date(""2020-01-01"") + days(DAYS_EMPLOYED))"
+"0",""
+"0","head(model_df)"

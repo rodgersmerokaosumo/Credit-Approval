@@ -1,0 +1,5 @@
+"0","# Calculate ROC curve"
+"0","library(pROC)"
+"0","roc_obj <- roc(actual_labels, predicted_labels)"
+"2","Error: object 'actual_labels' not found
+"

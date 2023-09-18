@@ -1,0 +1,5 @@
+"0","label_1 <- subset(status, label == 1)"
+"0","label_0 <- subset(status, label == 0)"
+"0","label_0_biased <- label_0[sample(nrow(label_0), 1701), ]"
+"0","labels_biased <- rbind(label_1, label_0_biased)"
+"0","labels_biased <- subset(labels_biased, select = c(""ID"", ""label""))"

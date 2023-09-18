@@ -1,0 +1,90 @@
+---
+title: "Untitled"
+output: pdf_document
+date: "2023-05-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reshape2)
+library(readr)
+```
+
+### Import Data
+
+```{r}
+application_record <- read_csv("application_record.csv")
+credit_record <- read_csv("credit_record.csv")
+head(credit_record)
+```
+
+```{r}
+# Join the two data frames by the ID column
+df <- inner_join(application_record , credit_record, by = "ID")
+df |> head()
+```
+
+
+```{r}
+df |> glimpse()
+```
+
+
+```{r}
+# Convert all character columns to factor
+df = df %>%
+  mutate_if(is.character, as.factor)
+summary(df)
+```
+
+```{r}
+# Summarize the data
+summary(df)
+```
+
+
+
+```{r}
+# Check for missing values
+colSums(is.na(df))
+```
+
+```{r}
+# Plot the distribution of a numeric variable
+ggplot(df, aes(x = AMT_INCOME_TOTAL)) +
+  geom_histogram()
+```
+
+
+```{r}
+# Plot the relationship between two numeric variables
+ggplot(df, aes(x = log(AMT_INCOME_TOTAL), y = DAYS_EMPLOYED)) +
+  geom_point() + theme_light()
+```
+
+```{r}
+# Plot the distribution of a categorical variable
+ggplot(df, aes(x = NAME_EDUCATION_TYPE)) +
+  geom_bar()+theme_light()
+```
+```{r}
+ggplot(df, aes(x = STATUS)) +
+  geom_bar()
+```
+```{r}
+library(cowplot)
+# Select only the categorical columns
+categorical_data <- df %>%
+  select_if(is.factor)
+
+# Melt the data into long format
+melted_data <- melt(categorical_data)
+
+df |> select()
+# Generate a grid plot of bar charts for each categorical variable
+ggplot(melted_data, aes(x = value)) +
+  geom_bar() +
+  facet_wrap(~ variable, scales = "free")
+```
+

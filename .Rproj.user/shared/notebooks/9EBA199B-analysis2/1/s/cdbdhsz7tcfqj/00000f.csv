@@ -1,0 +1,7 @@
+"0","library(dplyr)"
+"0",""
+"0","credit_start_status <- left_join(credit_card_first_month, credit_record, by = ""ID"") %>%"
+"0","  mutate(start_month = abs(start_month) + MONTHS_BALANCE)"
+"0",""
+"0",""
+"0","credit_start_status |> head()"

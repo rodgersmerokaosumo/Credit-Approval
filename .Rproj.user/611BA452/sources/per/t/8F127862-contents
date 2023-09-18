@@ -1,0 +1,490 @@
+---
+title: "Analysis"
+output:
+  word_document: default
+  pdf_document: default
+date: "2023-05-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(gains)
+library(car)
+library(ROCR)
+library(reshape2)
+library(readr)
+library(gridExtra)
+```
+
+
+### 1. Load and explore the data:
+
+Load the dataset using the `read.csv()` function.
+
+```{r}
+application_record <- read_csv("application_record.csv")
+credit_record <- read_csv("credit_record.csv")
+# Join the two data frames by the ID column
+df <- inner_join(application_record , credit_record, by = "ID")
+df |> glimpse()
+```
+
+Display representative portions of the data using functions like `head()`, `tail()`, or `summary()` to get an overview of the data.
+First, Convert all character data type columns to factors.
+
+
+```{r}
+# Convert all character columns to factor
+df = df %>%
+  mutate_if(is.character, as.factor)
+summary(df)
+```
+
+
+Check for missing values using the `is.na()` function and handle them appropriately, such as by imputing missing values or removing rows with missing values.
+
+```{r}
+# Check for missing values and clean the data
+missing_values <- df %>%
+  summarize_all(~ sum(is.na(.)))
+missing_values
+```
+
+There were no missing values for this dataset. Therefore, we move on to visualizing the dataset to inspect for outliers.
+
+Check for outliers by visualizing the distribution of variables using plots like box plots or histograms. Decide on a suitable approach to handle outliers, such as removing them or transforming the data.
+
+Dealing with Outliers in numerical columns.
+
+```{r}
+
+# Filter numerical columns
+num_cols <- df %>%
+  select(where(is.numeric)) %>%
+  names()
+
+# Define a function to handle outliers
+handle_outliers <- function(col) {
+  # Calculate quartiles and IQR
+  q1 <- quantile(col, 0.25)
+  q3 <- quantile(col, 0.75)
+  iqr <- q3 - q1
+  
+  # Define lower and upper bounds for outliers
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  
+  # Replace outliers with NA
+  col <- ifelse(col < lower_bound | col > upper_bound, NA, col)
+  
+  # Return the modified column
+  return(col)
+}
+
+# Handle outliers in each numerical column
+data_outliers_removed <- df %>%
+  mutate(across(num_cols, handle_outliers))
+
+# Display the updated summary of the dataset
+summary(data_outliers_removed)
+
+```
+The selected text describes a process for determining the start month for each credit card applicant based on the `MONTHS_BALANCE` column in the data. Since the data file does not contain information about the credit card open date, the earliest `MONTHS_BALANCE` value is assumed to be the start month for an account. The data is then rearranged so that the status for each month is available starting from month 0 (the start month), month 1 (one month from the start), and so on.
+
+In other words, this code aims to use the `MONTHS_BALANCE` column to determine the start month for each credit card applicant and reorganize the data accordingly.
+
+It is assumed that the data was extracted on January 1st, 2020 and the goal is to determine the calendar start month for each account. Having the calendar account open date could be useful for some analyses.
+
+```{r}
+library(dplyr)
+
+credit_card_first_month <- df %>%
+  group_by(ID) %>%
+  summarize(start_month = min(MONTHS_BALANCE)) %>%
+  ungroup()
+
+head(credit_card_first_month)
+
+```
+
+It is assumed that the data was extracted on January 1st, 2020 and the goal is to determine the calendar start month for each account. Having the calendar account open date could be useful for some analyses.
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+credit_card_first_month <- credit_card_first_month %>%
+  mutate(account_open_month = as.Date("2020-01-01")) %>%
+  mutate(account_open_month = account_open_month + months(start_month)) %>%
+  mutate(account_open_month = format(account_open_month, "%b-%Y"))
+
+credit_card_first_month |> head()
+```
+
+Account 5008804 was opened in October 2018 and account 5008805 was opened in November 2018. The start month column needs to be added to the credit status table.
+
+```{r}
+library(dplyr)
+
+credit_start_status <- left_join(credit_card_first_month, credit_record, by = "ID") %>%
+  mutate(start_month = abs(start_month) + MONTHS_BALANCE)
+
+
+credit_start_status |> head()
+```
+
+The status can be viewed by month since the start and the significance of what has been accomplished. Now, across all acquisition months, portfolio performance can be determined for months 1, 2, 5, 15, and 20 from their respective account open month. The distribution of accounts by status across each month is calculated by first finding the accounts by month and status code.
+
+```{r}
+credit_start_status %>%
+  count(STATUS)
+```
+
+```{r}
+
+accounts_counts <- credit_start_status %>%
+  count(start_month) %>%
+  as_tibble()
+
+ggplot(accounts_counts, aes(x = start_month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "start_month", y = "Count") +
+  theme_minimal()+ theme_light()
+```
+The goal is to calculate the percentage of bad rate for the entire portfolio across all account open months. This will help determine the period during which the overall bad rate remains stable. It is important to note that only a small number of credit card accounts were opened in the early months and may not be relevant for modeling purposes. The distribution of bad rate for these accounts can be checked.
+
+```{r}
+month_status_counts <- credit_start_status %>%
+  count(start_month, STATUS) %>%
+  rename(counts = n)
+
+month_counts <- credit_start_status %>%
+  count(start_month) %>%
+  rename(month_counts = n)
+
+month_status_pct <- month_status_counts %>%
+  left_join(month_counts, by = "start_month") %>%
+  mutate(status_pct = counts / month_counts * 100) %>%
+  select(start_month, STATUS, status_pct)
+
+```
+
+```{r}
+month_status_pct1 <- month_status_pct %>%
+  pivot_wider(names_from = STATUS, values_from = status_pct) %>%
+  replace(is.na(.), 0) %>%
+  mutate(start_month = as.character(start_month))
+```
+
+```{r}
+ggplot(month_status_pct1, aes(x = start_month, y = `4` + `5`)) +
+  geom_line(color = "steelblue", size = 2) +
+  geom_point(color = "steelblue", size = 1) +
+  labs(x = "Months Since Opened", y = "% Bad Rate")+ theme_minimal()
+
+```
+
+The bad rate increases significantly for accounts that have been open for more than 50 months. These are accounts that were opened during the initial days of operations. It may be a good idea to exclude these accounts.
+
+The bad rate stabilizes after 18 months from the start and this period can be considered as a performance window. Accounts that become bad within the first 18 months will be classified as bad and the rest as good. There may be differences in performance, such as the percentage of bad rate by acquisition month, but this is not being explored further. 
+
+Accounts with a status of 4 or 5 in the first 18 months will be classified as bad and the rest as good. Start months less than 18 will be selected and the maximum status for each credit card account will be determined. Accounts with a status of 4 or 5 will be classified as bad and the rest as good.
+
+```{r}
+
+credit_record %>%
+  count(STATUS)
+```
+
+```{r}
+credit_start_status %>%
+  group_by(STATUS) %>%
+  summarize(count = n())
+```
+
+```{r}
+credit_start_status1 <- credit_start_status %>%
+  filter(STATUS != 'X' & STATUS != 'C')
+
+credit_start_status1 <- credit_start_status1 %>%
+  mutate(status = STATUS)
+
+credit_start_status1 <- credit_start_status1 %>%
+  filter(start_month <= 18,
+         status != 'C',
+         status != 'X') %>%
+  select(ID, start_month, status)
+
+credit_start_status1
+
+```
+```{r}
+status <- credit_start_status1 %>%
+  group_by(ID) %>%
+  summarize(max_status = max(status)) %>%
+  ungroup()
+
+status_summary <- status %>%
+  group_by(max_status) %>%
+  summarize(count = n())
+
+status_summary
+
+```
+
+
+```{r}
+status <- status %>%
+  mutate(label = ifelse(as.integer(max_status) >= 4, 1, 0)) %>%
+  ungroup()
+
+status_summary <- status %>%
+  group_by(label) %>%
+  summarize(count = n())
+
+status_summary
+
+```
+
+```{r}
+status_summary <- status %>%
+  group_by(label) %>%
+  summarize(count = n()) %>%
+  mutate(percentage = count / length(status$label) * 100)
+
+status_summary
+```
+The data is highly imbalanced with a bad rate of 0.47%. A biased sample can be created by taking all observations of Label 1 and a small percentage of observations from Label 0. The goal is to increase the bad rate to around 10%, so in the final sample there will be 189 observations for Label 1 and 1701 for Label 0. The next step is to randomly select 1701 observations from a total of 39562.
+
+```{r}
+label_1 <- status %>%
+  filter(label == 1)
+
+label_0 <- status %>%
+  filter(label == 0)
+
+label_0_biased <- label_0 %>%
+  sample_n(1701, replace = FALSE)
+
+labels_biased <- bind_rows(label_1, label_0_biased) %>%
+  select(ID, label)
+
+labels_biased |> head()
+```
+```{r}
+model_df <- merge(labels_biased, application_record, by = "ID", all = FALSE)
+nrow(model_df)
+```
+```{r}
+model_df |> tail()
+```
+```{r}
+label_percent <- table(model_df$label) * 100 / length(model_df$label)
+label_percent
+```
+```{r}
+missing_values_table <- function(df) {
+  df %>%
+    summarise_all(~ sum(is.na(.))) %>%
+    gather(key = "Column", value = "Missing_Values") %>%
+    mutate(`%_of_Total_Values` = 100 * Missing_Values / nrow(df)) %>%
+    filter(Missing_Values > 0) %>%
+    arrange(desc(`%_of_Total_Values`)) %>%
+    select(Column, Missing_Values, `%_of_Total_Values`)
+}
+
+missing_values_table(df)
+
+```
+
+
+```{r}
+library(tidyr)
+library(purrr)
+
+featureType <- function(df) {
+  df %>%
+    summarise_all(~ {
+      uniq <- n_distinct(.)
+      if (nrow(df) > 10) {
+        if (is.numeric(.)) {
+          if (uniq == 1) {
+            'Unary'
+          } else if (uniq == 2) {
+            'Binary'
+          } else if (nrow(df) / uniq > 3 && uniq > 5) {
+            'Continuous'
+          } else {
+            'Continuous-Ordinal'
+          }
+        } else {
+          if (uniq == 1) {
+            'Unary'
+          } else if (uniq == 2) {
+            'Binary'
+          } else {
+            'Categorical-Nominal'
+          }
+        }
+      } else {
+        if (is.numeric(.)) {
+          'Numeric'
+        } else {
+          'Non-numeric'
+        }
+      }
+    }) %>%
+    gather(key = 'Feature', value = 'BaseFeatureType') %>%
+    mutate(AnalysisFeatureType = case_when(
+      grepl('^Unary$', BaseFeatureType) ~ BaseFeatureType,
+      grepl('^Binary$', BaseFeatureType) ~ BaseFeatureType,
+      grepl('^Continuous', BaseFeatureType) ~ 'Continuous',
+      grepl('^Categorical', BaseFeatureType) ~ 'Categorical-Nominal',
+      TRUE ~ BaseFeatureType
+    )) %>%
+    select(Feature, BaseFeatureType, AnalysisFeatureType)
+}
+
+featureType(df)
+```
+
+```{r}
+library(dplyr)
+
+model_df <- merge(model_df, credit_card_first_month %>% select(ID, account_open_month), by = "ID")
+nrow(model_df)
+```
+
+2. Split the data into training and testing sets:
+   - Use the `sample()` function to randomly split the dataset into a training set (70%) and a testing set (30%).
+   
+```{r}
+# Set the seed for reproducibility
+set.seed(123)
+model_df$label <- as.factor(model_df$label)
+# Split the data into a training set and a testing set
+data_split <- initial_split(model_df, prop = 0.7)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+
+### 3. Build the logistic regression model:
+Define the formula for the logistic regression model using the `glm()` function.
+Run the model using the training dataset.
+Interpret the results, particularly the p-values, which indicate the significance of each predictor variable in predicting loan approval.
+
+```{r}
+# Check for missing values
+na <- model_df %>%
+  summarise_all(~sum(is.na(.)))
+
+na
+```
+
+```{r}
+# Clean the data (assuming you want to remove rows with missing values)
+clean_data <- model_df %>%
+  drop_na()
+```
+
+
+```{r}
+# Split the data into a training set and testing set
+set.seed(123)  # For reproducibility
+train_indices <- sample(nrow(clean_data), floor(0.7 * nrow(clean_data)))
+
+train_data <- clean_data[train_indices, ]
+test_data <- clean_data[-train_indices, ]
+
+```
+
+
+```{r}
+# Define the formula for the logistic regression model
+formula <- formula(label ~. )
+
+# Run the logistic regression model
+model <- glm(formula, data = train_data, family = binomial)
+
+# Interpret the results
+summary(model)
+
+```
+Based on the provided p-values, we can assess the significance of the variables in predicting the target variable. The significance is usually indicated by the following significance levels: 
+
+- '***': Highly significant (p-value < 0.001)
+- '**': Moderately significant (p-value between 0.001 and 0.01)
+- '*': Marginally significant (p-value between 0.01 and 0.05)
+- '.': Borderline significant (p-value between 0.05 and 0.1)
+- ' ': Not significant (p-value > 0.1)
+
+Let's analyze the significance of some variables based on their respective p-values:
+
+- CODE_GENDERM: This variable is moderately significant with a p-value of 0.00189, indicating that it has a meaningful impact on the model.
+- FLAG_OWN_CARY: This variable is marginally significant with a p-value of 0.09602. Although it falls just outside the conventional threshold of 0.05, it still suggests a potential influence on the target variable.
+- CNT_CHILDREN: This variable is marginally significant with a p-value of 0.06333. Similar to FLAG_OWN_CARY, it is close to the threshold and may have an impact on the outcome.
+- NAME_INCOME_TYPEState servant: This variable is moderately significant with a p-value of 0.00355, suggesting it plays a significant role in the model.
+- NAME_FAMILY_STATUSSeparated: This variable is marginally significant with a p-value of 0.04706, indicating a potential influence on the target variable.
+- NAME_FAMILY_STATUSSingle / not married: This variable is moderately significant with a p-value of 0.00538, implying it has a meaningful impact on the model.
+- OCCUPATION_TYPEIT staff: This variable is marginally significant with a p-value of 0.04156, suggesting it plays a role in predicting the outcome.
+- CNT_FAM_MEMBERS: This variable is marginally significant with a p-value of 0.06912, indicating a potential influence on the target variable.
+
+It's important to note that the significance of variables should be interpreted in conjunction with other factors such as the magnitude and direction of the coefficients, model fit statistics, and domain knowledge. Additionally, these interpretations are based on the conventional significance levels and can vary depending on the specific context and requirements of the analysis.
+
+- Dispersion parameter for binomial family: This parameter is related to the assumed distribution of the target variable in the model. In this case, a binomial distribution is assumed, and the dispersion parameter is set to 1.
+
+- Null deviance: The null deviance represents the measure of the model's fit when only the intercept (null model) is considered. It measures the total variability in the response variable that cannot be explained by the model. In this case, the null deviance is 541.04, indicating the lack of fit of the null model.
+
+- Residual deviance: The residual deviance represents the measure of the model's fit after including the predictors. It measures the remaining variability in the response variable that is not explained by the predictors. In this case, the residual deviance is 348.95, indicating a reduction in variability compared to the null model and suggesting an improvement in model fit.
+
+- AIC (Akaike Information Criterion): The AIC is a measure of the model's goodness of fit that takes into account the complexity of the model. It balances the trade-off between model fit and the number of parameters. Lower AIC values indicate better model fit. In this case, the AIC is 560.95.
+
+- Number of Fisher Scoring iterations: Fisher Scoring is an iterative method used to estimate the parameters in logistic regression. The number of iterations indicates how many times the algorithm iterated to converge on the estimated parameters. In this case, it took 19 iterations to reach convergence.
+
+These statistics provide insights into the model's fit, significance of variables, and complexity. It suggests that the model has improved the fit compared to the null model, and the significance levels of individual variables indicate their potential impact on the target variable. The AIC value allows for comparison with other models to evaluate their relative performance.
+
+
+#### (II)Compare the predicted values with the actual loan approval status using appropriate evaluation metrics such as accuracy, precision, recall, or F1-score.
+
+```{r}
+# Make predictions on the testing set
+predictions <- predict(model, newdata = test_data, type = "response")
+
+# Compare predicted versus actual values
+predicted_classes <- ifelse(predictions > 0.5, 1, 0)
+actual_classes <- test_data$label
+
+# Check misclassified predictions
+misclassified <- actual_classes != predicted_classes
+misclassified_samples <- test_data[misclassified, ]
+nrow(misclassified_samples)/nrow(test_data)
+```
+
+
+Identify any significant differences between predicted and actual values and investigate potential reasons for the discrepancies.
+
+5. Validate the model:
+   - Produce a Gain and Lift chart using the `gains` package to assess the model's performance in terms of its predictive power.
+   - Calculate the Variation Inflation Factor (VIF) using the `vif()` function to test for multicollinearity among the predictor variables. If multicollinearity is detected (VIF > 5), consider removing highly correlated variables or applying other techniques to address the issue.
+   - If changes are made to the model based on the VIF analysis, update the formula for the logistic regression model accordingly.
+
+   
+```{r}
+# Convert loan_approval_status to numeric
+test_data$label <- as.numeric(as.character(test_data$label))
+
+# Produce a Gain and Lift chart
+library(gains)
+gain_chart <- gains(test_data$label, predictions)
+
+# Plot the Gain and Lift chart
+plot(gain_chart, main = "Gain Chart")
+```
+7. Suggestions for improving the model:
+   - Feature engineering: Consider creating new features or transforming existing ones to capture additional information or improve the model's performance.
+   - Handling class imbalance: If the dataset has imbalanced classes, apply techniques such as oversampling, undersampling, or using different evaluation metrics to address the issue.
+   - Model regularization: Explore regularization techniques like L1 or L2 regularization to prevent overfitting and improve generalization.
+   - Ensemble methods: Experiment with ensemble methods such as random forests or gradient boosting to potentially enhance the predictive accuracy of the model.

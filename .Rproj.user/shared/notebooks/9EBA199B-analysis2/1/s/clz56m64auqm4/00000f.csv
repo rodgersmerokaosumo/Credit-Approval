@@ -1,0 +1,4 @@
+"0","month_status_pct1 <- month_status_pct %>%"
+"0","  pivot_wider(names_from = STATUS, values_from = status_pct) %>%"
+"0","  replace(is.na(.), 0) %>%"
+"0","  mutate(start_month = as.character(start_month))"

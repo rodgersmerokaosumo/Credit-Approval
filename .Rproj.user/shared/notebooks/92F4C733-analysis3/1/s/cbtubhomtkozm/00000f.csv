@@ -1,0 +1,6 @@
+"0","model_df <- merge(model_df, credit_card_first_month %>% select(ID, account_open_month), by = ""ID"", all.x = TRUE)"
+"0","nrow(model_df)"
+"1","[1]"
+"1"," 1591"
+"1","
+"

@@ -1,0 +1,11 @@
+"0","# Load required libraries"
+"0","library(gains)"
+"0","library(car)"
+"0",""
+"0","# Calculate predicted probabilities from your fitted glm model"
+"0","predicted_probs <- predict(model, type = ""response"")"
+"0",""
+"0","# Create a data frame with actual responses and predicted probabilities"
+"0","results <- data.frame(actual = label, predicted = predicted_probs)"
+"2","Error: object 'label' not found
+"

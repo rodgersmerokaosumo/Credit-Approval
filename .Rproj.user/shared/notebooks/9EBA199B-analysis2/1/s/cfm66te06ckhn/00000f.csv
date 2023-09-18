@@ -1,0 +1,6 @@
+"0","ggplot(month_status_pct1, aes(x = start_month, y = `4` + `5`)) +"
+"0","  geom_line(color = ""steelblue"", size = 2) +"
+"0","  geom_point(color = ""steelblue"", size = 1) +"
+"0","  labs(x = ""Months Since Opened"", y = ""% Bad Rate"")+ theme_minimal()"
+"2","Warning: Using `size` aesthetic for lines was deprecated in ggplot2 3.4.0.
+Please use `linewidth` instead."

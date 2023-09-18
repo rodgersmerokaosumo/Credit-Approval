@@ -1,0 +1,7 @@
+"0","# Split the data into a training set and testing set"
+"0","set.seed(123)  # For reproducibility"
+"0","train_indices <- sample(nrow(clean_data), floor(0.7 * nrow(clean_data)))"
+"0",""
+"0","train_data <- clean_data[train_indices, ]"
+"0","test_data <- clean_data[-train_indices, ]"
+"0",""

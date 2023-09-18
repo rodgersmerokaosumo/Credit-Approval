@@ -1,0 +1,3 @@
+"0","# Clean the data (assuming you want to remove rows with missing values)"
+"0","clean_data <- model_df %>%"
+"0","  drop_na()"

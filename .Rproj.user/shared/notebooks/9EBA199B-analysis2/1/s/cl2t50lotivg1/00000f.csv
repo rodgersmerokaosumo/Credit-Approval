@@ -1,0 +1,4 @@
+"0","# Check for missing values and clean the data"
+"0","missing_values <- df %>%"
+"0","  summarize_all(~ sum(is.na(.)))"
+"0","missing_values"

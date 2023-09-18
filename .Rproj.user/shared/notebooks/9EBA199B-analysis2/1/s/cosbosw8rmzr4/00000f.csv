@@ -1,0 +1,5 @@
+"0","# Check for missing values"
+"0","na <- model_df %>%"
+"0","  summarise_all(~sum(is.na(.)))"
+"0",""
+"0","na"

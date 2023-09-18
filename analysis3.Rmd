@@ -1,0 +1,765 @@
+---
+title: "Analysis"
+output:
+  word_document: default
+  pdf_document: default
+date: "2023-05-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fastDummies)
+library(lubridate)
+library(tidyr)
+library(tidymodels)
+library(gains)
+library(car)
+library(ROCR)
+library(reshape2)
+library(readr)
+library(gridExtra)
+```
+### 1. Application Record
+The customers submit their credit card applications either online or through a physical form. The application information is utilized to evaluate the creditworthiness of the customers. Along with the application details, factors such as the Credit Bureau Score (e.g., FICO Score in the US, CIBIL Score in India) and other internal applicant information are taken into account for making a decision.
+
+Moreover, banks are progressively incorporating a wide range of external data sources to enhance the accuracy and reliability of credit assessments.
+
+Next, we will proceed to read and examine the provided sample data file containing the credit card applications.
+
+### 2. Credit Record
+
+After a credit card is issued, customers utilize it for purchasing items they need. A statement is generated to notify them of the outstanding balance, and they are required to make a payment by the specified due date. This process represents a typical credit card cycle.
+
+If a customer fails to make a payment for at least the minimum amount due, they are considered past due for that particular month. If this non-payment continues for a certain period, the customer is classified as a defaulter, and the outstanding amount is written off as bad debt. The bank undertakes various efforts and steps to recover the due amount, which falls under the collection process.
+
+In the modeling process, the objective is to identify customers who are unable to repay their dues and subsequently avoid approving applications from customers who exhibit similar characteristics. However, it is important to note that we do not possess information on rejected applications or the proportion of those that could have been potential good customers. This aspect is beyond the scope of this discussion.
+
+For this exercise, a credit status file has been provided. This file includes the status value assigned to each application following approval.
+
+ID: The unique identifier that serves as the common key between the application data and credit status data.
+
+MONTHS_BALANCE: Indicates the month when the data was extracted. The value 0 represents the current month, while -1 represents the previous month, and so on.
+
+STATUS: Represents the status of the credit card account.
+
+- 0: Indicates that the account is 1-29 days past due.
+- 1: Indicates that the account is 30-59 days past due.
+- 2: Indicates that the account is 60-89 days overdue.
+- 3: Indicates that the account is 90-119 days overdue.
+- 4: Indicates that the account is 120-149 days overdue.
+- 5: Indicates that the account is overdue or has bad debts, with write-offs for more than 150 days.
+- C: Indicates that the account has been paid off during that month.
+- X: Indicates that there was no loan associated with the account for that particular month.
+
+It would be valuable to examine the accounts based on the MONTHS_BALANCE variable. However, it would have been more informative if we had access to the application date or month. Additionally, having the status value for each month following the opening of the credit card account would allow for a comparison of the credit behavior of the applicants throughout their application months. This information would provide insights into how their credit status evolves over time.
+
+
+### 1. Load and explore the data:
+
+Load the dataset using the `read.csv()` function.
+
+```{r}
+application_record <- read_csv("application_record.csv")
+credit_record <- read_csv("credit_record.csv")
+# Join the two data frames by the ID column
+df <- inner_join(application_record , credit_record, by = "ID")
+df |> glimpse()
+```
+
+Display representative portions of the data using functions like `head()`, `tail()`, or `summary()` to get an overview of the data.
+First, Convert all character data type columns to factors.
+
+
+```{r}
+# Convert all character columns to factor
+application_record= application_record %>%
+  mutate_if(is.character, as.factor)
+credit_record = credit_record %>%
+  mutate_if(is.character, as.factor)
+# Convert specific columns to factors
+application_record <-  application_record %>%
+  mutate(across(c(FLAG_WORK_PHONE, FLAG_PHONE, FLAG_EMAIL), factor))
+application_record |> glimpse()
+```
+
+```{r}
+credit_record |> glimpse()
+```
+```{r}
+summary(application_record)
+```
+Here are the rephrased observations from the summary statistics:
+
+1. Regarding the FLAG_MOBIL variable, since the minimum and maximum values are the same, it may not provide any useful information.
+
+2. For the CNT_FAM_MEMBERS variable, it is worth noting that the maximum value is 20, which seems unusually high compared to the 75th percentile value of 3. This suggests the presence of potential outliers that should be examined.
+
+2. For the CNT_CHILDREN variable, it is worth noting that the maximum value is 19, which seems unusually high compared to the 1 percentile value of 3. This suggests the presence of potential outliers also that should be examined.
+
+```{r}
+out_df <- credit_record %>%
+  group_by(MONTHS_BALANCE) %>%
+  summarise(counts = n(),
+            percent = n() * 100 / nrow(credit_record)) %>%
+  ungroup()
+
+# Plotting using ggplot
+ggplot(out_df, aes(x = MONTHS_BALANCE, y = percent)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Months Balance", y = "Percentage") +
+  ggtitle("Credit Status Distribution by Months Balance")+theme_light()
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+pivot_df <- out_df %>%
+  pivot_wider(names_from = MONTHS_BALANCE, values_from = c(counts, percent))
+
+# View the pivot table
+t(pivot_df)
+
+```
+
+### Target Variable Creation
+
+In a bank, after a credit card is approved, the account is monitored over a specific period to assess its performance and the overall health of the portfolio.
+
+To develop an application scorecard, we require a label variable that categorizes each account as "Good" or "Bad" based on the credit status at the end of a defined period. By utilizing the available features at the time of application, the modeling technique enables us to distinguish between the profiles of the "Good" and "Bad" segments.
+
+For this analysis, accounts that have been overdue for more than 120 days (status 4 and 5) are considered "Bad," while others are considered "Good."
+
+The bad rate for a particular period is calculated as the percentage of overall accounts that are classified as "Bad."
+
+Cohort or vintage analysis assists in monitoring the bad rates (percentage of accounts categorized as "Bad") across months starting from the month of acquisition. This analysis helps determine the suitable performance window or period (number of months between the account opening month and the status month) to define the target variable. In the provided example diagram, the status is evaluated after 6 months to define the target variable.
+
+To rearrange the data based on the `MONTHS_BALANCE` column and align the status for each month relative to the start month.
+
+
+```{r}
+library(dplyr)
+
+credit_card_first_month <- credit_record %>%
+  group_by(ID) %>%
+  summarise(start_month = min(MONTHS_BALANCE)) %>%
+  ungroup()
+
+# View the credit_card_first_month data
+credit_card_first_month |> head()
+
+```
+
+```{r}
+reference_date <- as.Date("2020-01-01")  # Set the reference date
+
+credit_card_first_month <- credit_card_first_month %>%
+  mutate(account_open_month = reference_date +
+           months(as.numeric(start_month))) %>%
+  mutate(account_open_month = format(account_open_month, format = "%b-%Y"))
+
+# View the updated credit_card_first_month data
+credit_card_first_month |> head()
+
+```
+```{r}
+library(dplyr)
+
+credit_card_first_month <- credit_record %>%
+  group_by(ID) %>%
+  summarize(start_month = min(MONTHS_BALANCE)) %>%
+  ungroup()
+
+head(credit_card_first_month)
+
+```
+
+```{r}
+credit_card_first_month <- credit_card_first_month %>%
+  mutate(account_open_month = as.Date("2020-01-01")) %>%
+  mutate(account_open_month = account_open_month + months(start_month)) %>%
+  mutate(account_open_month = format(account_open_month, "%b-%Y"))
+
+credit_card_first_month |> head()
+```
+
+```{r}
+credit_start_status <- left_join(credit_card_first_month, credit_record, by = "ID") %>%
+  mutate(start_month = abs(start_month) + MONTHS_BALANCE)
+
+
+credit_start_status |> head()
+```
+
+```{r}
+credit_start_status %>%
+  count(STATUS)
+```
+
+```{r}
+# Count the occurrences of each STATUS category
+status_counts <- credit_start_status %>%
+  count(STATUS)
+
+# Create a bar plot
+ggplot(status_counts, aes(x = STATUS, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "STATUS", y = "Count", title = "Counts of Each STATUS Category") + theme_minimal()
+
+```
+
+```{r}
+# Create a dataframe with counts of start_month
+accounts_counts <- credit_start_status %>%
+  count(start_month)
+
+# Create a bar plot
+ggplot(accounts_counts, aes(x = start_month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Start Month", y = "Count", title = "Counts of Accounts by Start Month") + theme_minimal()
+
+```
+We aim to determine the overall Bad Rate percentage across all account open months to identify a stable period. This analysis will assist us in identifying the timeframe when the Bad Rate remains consistent.
+
+Furthermore, it is worth noting that there is a relatively small number of credit card accounts opened in the earlier months. These accounts may not hold significant relevance for modeling purposes. To assess this, we can examine the distribution of Bad Rates for these specific accounts.
+
+```{r}
+# Calculate counts by start_month and STATUS
+month_status_counts <- credit_start_status %>%
+  group_by(start_month, STATUS) %>%
+  summarise(counts = n()) %>%
+  ungroup()
+
+# Calculate counts by start_month
+month_counts <- credit_start_status %>%
+  group_by(start_month) %>%
+  summarise(month_counts = n()) %>%
+  ungroup()
+
+# Join the tables
+month_status_pct <- left_join(month_status_counts, month_counts, by = "start_month")
+
+# Calculate the status_pct
+month_status_pct <- month_status_pct %>%
+  mutate(status_pct = counts / month_counts * 100) %>%
+  select(start_month, STATUS, status_pct)
+
+```
+```{r}
+library(tidyr)
+
+# Reshape the data
+month_status_pct1 <- month_status_pct %>%
+  pivot_wider(names_from = STATUS, values_from = status_pct, values_fill = 0) %>%
+  ungroup() %>%
+  select(start_month, everything()) %>%
+  na.omit()
+
+```
+
+```{r}
+# Create the plot
+ggplot(month_status_pct1, aes(x = start_month, y = `4` + `5`)) +
+  geom_line(color = "steelblue", linetype = "solid", linewidth = 2) +
+  geom_point(color = "steelblue", size = 1.5) +
+  labs(x = "Months Since Opened", y = "% Bad Rate")+theme_minimal()
+
+```
+
+The Bad Rate shows a notable increase for accounts that have been open for more than 50 months. This includes accounts that were opened during the early stages of operations. Considering the characteristics of these accounts, it might be advisable to exclude them from further analysis.
+
+
+
+The bad rate stabilizes after 18 months from the start, which can be considered as the performance window. Accounts that become bad within the first 18 months will be classified as "Bad," while the rest will be classified as "Good."
+
+Although there might be variations in performance and bad rate by acquisition month, we won't be further exploring that aspect. Instead, we will focus on status 4 and 5 within the first 18 months to determine whether an account is "Bad" or "Good."
+
+To implement this, we will filter out start months that are less than 18 to consider only the first 18 months. Then, for each credit card account, we will identify the maximum status. If the maximum status is 4 or 5, we will classify the account as "Bad"; otherwise, it will be classified as "Good."
+
+```{r}
+# Count the occurrences of each status
+status_counts <- count(credit_start_status, STATUS)
+
+# Remove rows with status 'C' and 'X'
+credit_start_status1 <- credit_start_status %>%
+  filter(STATUS != 'C' & STATUS != 'X')
+
+# Change status to numeric
+credit_start_status1$status <- as.integer(credit_start_status1$STATUS)
+
+# Filter rows with start month less than or equal to 18
+credit_start_status1 <- credit_start_status1 %>%
+  filter(start_month <= 18) %>%
+  select(ID, start_month, status)
+
+credit_start_status1 |> tail()
+
+```
+
+```{r}
+status <- credit_start_status1 %>%
+  group_by(ID) %>%
+  summarise(max_status = max(status)) %>%
+  ungroup()
+
+# Validate
+status_counts <- count(status, max_status)
+status_counts
+```
+
+
+```{r}
+status$label <- ifelse(status$max_status >= 4, 1, 0)
+
+# Validate
+label_counts <- count(status, label)
+label_counts
+```
+```{r}
+bad_rate <- prop.table(table(status$label)) * 100
+bad_rate
+```
+The data is characterized by a highly unbalanced distribution, with a bad rate of 0.47%. In order to address this, we can create a biased sample by including all observations of Label 1 (representing the "Bad" category), while selecting a smaller percentage of observations from Label 0 (representing the "Good" category). The objective is to achieve an improved bad rate of approximately 10%. As a result, our final sample will consist of 189 observations for Label 1 and 1701 observations for Label 0.
+
+Next, we need to randomly select 1701 observations from a total of 39562 observations in the dataset.
+
+```{r}
+label_1 <- subset(status, label == 1)
+label_0 <- subset(status, label == 0)
+label_0_biased <- label_0[sample(nrow(label_0), 1701), ]
+labels_biased <- rbind(label_1, label_0_biased)
+labels_biased <- subset(labels_biased, select = c("ID", "label"))
+```
+
+```{r}
+labels_biased |> tail()
+```
+
+
+```{r}
+model_df <- inner_join(labels_biased, application_record, by = "ID")
+nrow(model_df)
+```
+
+Observation: There is a discrepancy in the number of observations between the expected 1890 observations and the actual number of observations in the combined dataset. This suggests that there might be inconsistencies or missing data between the Application and Credit Status files provided. Further investigation and data reconciliation are necessary to address this issue.
+
+```{r}
+model_df |> tail()
+```
+
+```{r}
+model_df %>%
+  count(label) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+```
+
+### Data Exploration:
+
+To gain insights into the Credit Card Applications dataset, we will examine the features and label variables. Our goal is to understand the distribution of these variables and identify any missing values.
+
+To begin our analysis, let's first explore the types of variables present in the dataset.
+
+```{r}
+model_df |> glimpse()
+```
+```{r}
+summary(model_df)
+```
+Checking for missing values;
+
+```{r}
+missing_values_table <- function(df) {
+  mis_val <- df %>%
+    summarise_all(~ sum(is.na(.))) %>%
+    t() %>%
+    as.data.frame() %>%
+    rename(Missing_Values = V1)
+  
+  mis_val_percent <- df %>%
+    summarise_all(~ mean(is.na(.)) * 100) %>%
+    t() %>%
+    as.data.frame() %>%
+    rename(`% of Total Values` = V1)
+  
+  mis_val_table <- bind_cols(mis_val, mis_val_percent)
+  mis_val_table_ren_columns <- mis_val_table %>%
+    filter(`% of Total Values` != 0) %>%
+    arrange(desc(`% of Total Values`))
+  
+  cat(paste("Your selected dataframe has", ncol(df), "columns.\n",
+            "There are", nrow(mis_val_table_ren_columns), "columns that have missing values.\n"))
+  
+  return(mis_val_table_ren_columns)
+}
+
+# Call the function
+missing_values_table(model_df)
+
+```
+Observation: The variable "Occupation Type" is missing for approximately 32% of the applicants. We can consider this as a separate class and handle it accordingly in the analysis.
+
+Next, we will perform bivariate analysis between the Label variable and each of the feature variables. The type of analysis will depend on the analytical nature of the feature variables. To determine the analytical type of the variables, we have implemented a function.
+
+```{r}
+library(dplyr)
+
+# Find Continuous and Categorical Features
+featureType <- function(df) {
+  colTypeBase <- vector()
+  colType <- vector()
+  
+  for (col in names(df)) {
+    tryCatch({
+      uniq <- df %>% pull({{ col }}) %>% unique() %>% length()
+      if (nrow(df) > 10) {
+        if (is.numeric(df[[col]])) {
+          if (uniq == 1) {
+            colType <- append(colType, "Unary")
+            colTypeBase <- append(colTypeBase, "Unary")
+          } else if (uniq == 2) {
+            colType <- append(colType, "Binary")
+            colTypeBase <- append(colTypeBase, "Binary")
+          } else if (nrow(df) / uniq > 3 & uniq > 5) {
+            colType <- append(colType, "Continuous")
+            colTypeBase <- append(colTypeBase, "Continuous")
+          } else {
+            colType <- append(colType, "Continuous-Ordinal")
+            colTypeBase <- append(colTypeBase, "Ordinal")
+          }
+        } else {
+          if (uniq == 1) {
+            colType <- append(colType, "Unary")
+            colTypeBase <- append(colTypeBase, "Category-Unary")
+          } else if (uniq == 2) {
+            colType <- append(colType, "Binary")
+            colTypeBase <- append(colTypeBase, "Category-Binary")
+          } else {
+            colType <- append(colType, "Categorical-Nominal")
+            colTypeBase <- append(colTypeBase, "Nominal")
+          }
+        }
+      } else {
+        if (is.numeric(df[[col]])) {
+          colType <- append(colType, "Numeric")
+          colTypeBase <- append(colTypeBase, "Numeric")
+        } else {
+          colType <- append(colType, "Non-numeric")
+          colTypeBase <- append(colTypeBase, "Non-numeric")
+        }
+      }
+    }, error = function(e) {
+      colType <- append(colType, "Issue")
+    })
+  }
+  
+  # Create dataframe
+  df_out <- tibble(
+    Feature = names(df),
+    BaseFeatureType = colTypeBase,
+    AnalysisFeatureType = colType
+  )
+  
+  return(df_out)
+}
+
+featureType(model_df)
+
+```
+
+Observations:
+1. The variable FLAG_MOBIL has only a single value, making it not useful for the analysis.
+2. The variables DAYS_BIRTH and DAYS_EMPLOYED represent the number of days from the day the data was extracted. Since we want the values as of the application day, we need to convert these variables to their corresponding birth dates and employment start dates.
+3. Assuming the date of data extraction as '01-01-2020', we can derive the date of birth and employment start date from the given days.
+
+```{r}
+library(lubridate)
+
+model_df <- model_df %>%
+  mutate(BIRTH_DATE = as.Date("2020-01-01") + days(DAYS_BIRTH),
+         DAYS_EMPLOYED = ifelse(DAYS_EMPLOYED > 0, 31, DAYS_EMPLOYED),
+         EMPLOYMENT_START_DATE = as.Date("2020-01-01") + days(DAYS_EMPLOYED))
+
+head(model_df)
+
+```
+
+To compute the employment year and age at the time of application, the account opening month is required. Fortunately, we have already generated the account opening month column in a separate data frame. We can merge/join this table with the existing data frame to incorporate the account opening month information. This will enable us to perform the necessary calculations for employment year and age based on the application date.
+
+```{r}
+model_df <- merge(model_df, credit_card_first_month %>% select(ID, account_open_month), by = "ID", all.x = TRUE)
+nrow(model_df)
+```
+Now, using the account open month and date of birth, we can calculate the age as of the application date. Likewise, we can determine the months of experience as of the application date.
+
+```{r}
+# Convert date columns to appropriate formats
+model_df <- model_df %>%
+  mutate(BIRTH_DATE = as.Date(BIRTH_DATE),
+         EMPLOYMENT_START_DATE = as.Date(EMPLOYMENT_START_DATE),
+         account_open_month = as.Date(paste0("01-", account_open_month), format = "%d-%b-%Y"))
+
+# Age in months
+model_df <- model_df %>%
+  mutate(age_months = floor(as.numeric(difftime(account_open_month, BIRTH_DATE, units = "days")) / 30))
+
+# Experience/Employment in Months
+model_df <- model_df %>%
+  mutate(employment_months = floor(as.numeric(difftime(account_open_month, EMPLOYMENT_START_DATE, units = "days")) / 30))
+
+head(model_df)
+
+```
+
+To handle the cases where applicants were not employed at the time of credit card approval and have negative employment month values, we can assign them a value of -1 for the employment months. This will help us distinguish them from other applicants.
+
+```{r}
+model_df <- model_df %>%
+  mutate(employment_months = ifelse(employment_months < 0, -1, employment_months))
+
+```
+
+It is recommended to remove all the date variables and the variable FLAG_MOBIL from this table as they are not useful for the analysis.
+
+```{r}
+model_df <- model_df %>%
+  select(-BIRTH_DATE, -EMPLOYMENT_START_DATE, -account_open_month, -DAYS_BIRTH, -DAYS_EMPLOYED, -FLAG_MOBIL)
+
+featureType(model_df)
+
+```
+
+To check the association between the label and a nominal variable, we can use various statistical measures such as chi-square test or contingency table analysis. These measures help us understand the relationship and dependency between two categorical variables.
+
+```{r}
+library(tidyr)
+
+# Calculate counts for each income type and label
+income_type <- model_df %>%
+  count(NAME_INCOME_TYPE, label) %>%
+  pivot_wider(names_from = label, values_from = n, names_prefix = "Label_") %>%
+  replace(is.na(.), 0)
+
+# Calculate the total observations for each income type
+income_type <- income_type %>%
+  mutate(pct_obs = (Label_0 + Label_1) / sum(Label_0 + Label_1))
+
+# Calculate the percentage of label 0 for each income type
+income_type <- income_type %>%
+  mutate(pct_label_0 = Label_0 / (Label_0 + Label_1))
+
+# Calculate the percentage of label 1 for each income type
+income_type <- income_type %>%
+  mutate(pct_label_1 = Label_1 / (Label_0 + Label_1))
+
+# Print the resulting dataframe
+print(income_type)
+
+```
+
+### Analysis: Nominal Variable Observations
+
+The analysis of the nominal variables reveals the following insights:
+
+1. State servant segment: This segment represents 8% of the sample and exhibits a lower bad rate of 8% compared to the overall bad rate of 11%.
+
+2. Commercial associate and Pensioner segments: These income type segments show similar bad rates and can be combined into a single segment for analysis.
+
+Further analysis can be conducted for each of the other nominal variables. To simplify the analysis, we can create an encoding for each value of the nominal variables using one-hot encoding. This will allow for easier interpretation and analysis of the data.
+
+```{r}
+# Change missing value for OCCUPATION_TYPE
+model_df$OCCUPATION_TYPE[model_df$OCCUPATION_TYPE == ""] <- "NA"
+
+# One-hot Encoding using dummy_cols function from tidyr package
+library(tidyr)
+model_df2 <- dummy_cols(model_df, select_columns = c('CODE_GENDER', 'FLAG_OWN_CAR', 'FLAG_OWN_REALTY', 'NAME_INCOME_TYPE', 'NAME_EDUCATION_TYPE', 'NAME_FAMILY_STATUS', 'NAME_HOUSING_TYPE', 'OCCUPATION_TYPE'))
+
+nrow(model_df2)
+
+```
+### Modelling
+
+exclude Id
+
+```{r}
+# Features - exclude ID and Label columns
+features <- model_df2[, -(1:2)]
+
+# Label - select only label column
+label <- model_df2[, 2]
+```
+
+
+```{r}
+# Split the data into a training set and testing set
+set.seed(123)  # For reproducibility
+train_indices <- sample(nrow(model_df2), floor(0.7 * nrow(model_df2)))
+
+train_data <- model_df2[train_indices, ]
+test_data <- model_df2[-train_indices, ]
+
+```
+
+To perform these steps, we will need to use a specific predictive modeling algorithm, using logistic regression. 
+
+1. Define the formula for the model:
+
+```{r}
+# Define the formula for the logistic regression model
+formula <- formula(train_data$label ~. )
+
+# Run the logistic regression model
+model <- glm(formula, data = train_data, family = binomial)
+
+# Interpret the results
+summary(model)
+```
+
+3. Interpret the results, referring to the p-values:
+   - Analyze the model coefficients, their significance, and p-values to understand the relationship between the predictors and the response variable. Lower p-values indicate stronger evidence against the null hypothesis.
+
+Based on the provided p-values, we can assess the significance of the variables in predicting the target variable. The significance is usually indicated by the following significance levels: 
+
+- '***': Highly significant (p-value < 0.001)
+- '**': Moderately significant (p-value between 0.001 and 0.01)
+- '*': Marginally significant (p-value between 0.01 and 0.05)
+- '.': Borderline significant (p-value between 0.05 and 0.1)
+- ' ': Not significant (p-value > 0.1)
+
+Let's analyze the significance of some variables based on their respective p-values:
+
+- CODE_GENDERM: This variable is moderately significant with a p-value of 0.00189, indicating that it has a meaningful impact on the model.
+- FLAG_OWN_CARY: This variable is marginally significant with a p-value of 0.09602. Although it falls just outside the conventional threshold of 0.05, it still suggests a potential influence on the target variable.
+- CNT_CHILDREN: This variable is marginally significant with a p-value of 0.06333. Similar to FLAG_OWN_CARY, it is close to the threshold and may have an impact on the outcome.
+- NAME_INCOME_TYPEState servant: This variable is moderately significant with a p-value of 0.00355, suggesting it plays a significant role in the model.
+- NAME_FAMILY_STATUSSeparated: This variable is marginally significant with a p-value of 0.04706, indicating a potential influence on the target variable.
+- NAME_FAMILY_STATUSSingle / not married: This variable is moderately significant with a p-value of 0.00538, implying it has a meaningful impact on the model.
+- OCCUPATION_TYPEIT staff: This variable is marginally significant with a p-value of 0.04156, suggesting it plays a role in predicting the outcome.
+- CNT_FAM_MEMBERS: This variable is marginally significant with a p-value of 0.06912, indicating a potential influence on the target variable.
+
+It's important to note that the significance of variables should be interpreted in conjunction with other factors such as the magnitude and direction of the coefficients, model fit statistics, and domain knowledge. Additionally, these interpretations are based on the conventional significance levels and can vary depending on the specific context and requirements of the analysis.
+
+- Dispersion parameter for binomial family: This parameter is related to the assumed distribution of the target variable in the model. In this case, a binomial distribution is assumed, and the dispersion parameter is set to 1.
+
+- Null deviance: The null deviance represents the measure of the model's fit when only the intercept (null model) is considered. It measures the total variability in the response variable that cannot be explained by the model. In this case, the null deviance is 541.04, indicating the lack of fit of the null model.
+
+- Residual deviance: The residual deviance represents the measure of the model's fit after including the predictors. It measures the remaining variability in the response variable that is not explained by the predictors. In this case, the residual deviance is 348.95, indicating a reduction in variability compared to the null model and suggesting an improvement in model fit.
+
+- AIC (Akaike Information Criterion): The AIC is a measure of the model's goodness of fit that takes into account the complexity of the model. It balances the trade-off between model fit and the number of parameters. Lower AIC values indicate better model fit. In this case, the AIC is 560.95.
+
+- Number of Fisher Scoring iterations: Fisher Scoring is an iterative method used to estimate the parameters in logistic regression. The number of iterations indicates how many times the algorithm iterated to converge on the estimated parameters. In this case, it took 19 iterations to reach convergence.
+
+These statistics provide insights into the model's fit, significance of variables, and complexity. It suggests that the model has improved the fit compared to the null model, and the significance levels of individual variables indicate their potential impact on the target variable. The AIC value allows for comparison with other models to evaluate their relative performance.
+
+
+4. Evaluate the model performance:
+   - Compare the predicted values from the model with the actual values in the test dataset. Calculate metrics such as accuracy, precision, recall, or ROC curve to assess the performance of the model.
+   
+```{r}
+# Assuming you have the model object and test data available
+
+# Predict on the test data
+predicted_labels <- predict(model, newdata = test_data, type = "response")
+
+# Convert predicted probabilities to binary labels
+predicted_classes <- ifelse(predicted_labels > 0.5, 1, 0)
+
+# Compare predicted labels with actual labels
+actual_labels <- test_data$label
+
+# Calculate accuracy
+accuracy <- sum(predicted_classes == actual_labels) / length(actual_labels)
+cat("Accuracy:", accuracy, "\n")
+```
+
+
+```{r}
+# Calculate precision
+true_positive <- sum(predicted_classes == 1 & actual_labels == 1)
+false_positive <- sum(predicted_classes == 1 & actual_labels == 0)
+precision <- true_positive / (true_positive + false_positive)
+cat("Precision:", precision, "\n")
+```
+```{r}
+# Calculate recall (sensitivity)
+false_negative <- sum(predicted_classes == 0 & actual_labels == 1)
+recall <- true_positive / (true_positive + false_negative)
+cat("Recall:", recall, "\n")
+
+```
+```{r}
+# Calculate ROC curve
+library(pROC)
+roc_obj <- roc(actual_labels, predicted_labels)
+plot(roc_obj, main = "ROC Curve")
+```
+
+
+
+5. Validate the model:
+   - Produce a Gain and Lift chart to evaluate the model's ability to target positive cases effectively. Check for multicollinearity using the Variance Inflation Factor (VIF) and consider removing highly correlated variables to improve model performance.
+
+```{r}
+# Load required libraries
+library(gains)
+library(car)
+
+# Calculate predicted probabilities from your fitted glm model
+predicted_probs <- predict(model, type = "response")
+
+# Create a data frame with actual responses and predicted probabilities
+results <- data.frame(actual = label, predicted = predicted_probs)
+
+# Sort the results by predicted probabilities
+sorted_results <- results[order(results$predicted, decreasing = TRUE), ]
+
+# Create bins and calculate cumulative gains
+bins <- gains_table(sorted_results$actual, n = 10)  # Specify the number of bins you want
+
+# Calculate cumulative gains percentage
+bins$cumulative_gains_percentage <- cumsum(bins$cumulative_gains) / sum(bins$cumulative_gains) * 100
+
+# Calculate random gains
+bins$random_gains <- bins$bin_percentage * sum(bins$cumulative_gains)
+
+# Plot the Gain and Lift chart
+plot(bins$bin_percentage, bins$cumulative_gains_percentage, type = "b", 
+     xlab = "Percentage of Observations", ylab = "Cumulative Gains Percentage",
+     main = "Gain and Lift Chart")
+
+# Add random gains line
+lines(bins$bin_percentage, bins$random_gains, col = "red")
+
+# Check for multicollinearity using VIF
+vif_results <- vif(model)
+
+# Display VIF results
+print(vif_results)
+
+
+```
+
+
+
+```{r}
+# Plot Gain and Lift chart
+plot(gain_lift)
+
+
+```
+
+
+6. Make predictions:
+   - Use the trained model to make predictions on new or unseen data. Provide sample input data to the model and obtain predicted output values.
+
+7. Validate the predictions and interpret the results:
+   - Compare the predicted values with the actual values in the validation dataset. Calculate metrics such as misclassification error to assess the accuracy of the predictions. Interpret the results and draw conclusions based on the model's performance.
+
+8. Suggestions for improving the model:
+   - Based on the model's performance and analysis, suggest potential improvements such as collecting additional relevant variables, handling missing data, addressing outliers, or trying different algorithms or model configurations.
+
+Please note that implementing these steps requires a specific dataset, modeling algorithm, and domain knowledge. It is recommended to consult the appropriate documentation and references for the specific algorithm you are using and adapt the code accordingly to your requirements.
+

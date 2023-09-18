@@ -1,0 +1,8 @@
+"0","status <- credit_start_status1 %>%"
+"0","  group_by(ID) %>%"
+"0","  summarise(max_status = max(status)) %>%"
+"0","  ungroup()"
+"0",""
+"0","# Validate"
+"0","status_counts <- count(status, max_status)"
+"0","status_counts"

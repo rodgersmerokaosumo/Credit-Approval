@@ -1,0 +1,7 @@
+"0","# Assuming you have the model object and test data available"
+"0",""
+"0","# Predict on the test data"
+"0","predicted_labels <- predict(model, newdata = test_data, type = ""response"")"
+"2","Error in model.frame.default(Terms, newdata, na.action = na.action, xlev = object$xlevels) : 
+  factor NAME_INCOME_TYPE has new levels Student
+"

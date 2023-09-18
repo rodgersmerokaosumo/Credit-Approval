@@ -1,0 +1,8 @@
+"0","library(dplyr)"
+"0",""
+"0","credit_card_first_month <- df %>%"
+"0","  group_by(ID) %>%"
+"0","  summarize(start_month = min(MONTHS_BALANCE)) %>%"
+"0","  ungroup()"
+"0",""
+"0","head(credit_card_first_month)"

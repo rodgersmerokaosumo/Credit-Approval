@@ -1,0 +1,6 @@
+"0","# Create the plot"
+"0","ggplot(month_status_pct1, aes(x = start_month, y = `4` + `5`)) +"
+"0","  geom_line(color = ""steelblue"", linetype = ""solid"", linewidth = 2) +"
+"0","  geom_point(color = ""steelblue"", size = 1.5) +"
+"0","  labs(x = ""Months Since Opened"", y = ""% Bad Rate"")+theme_minimal()"
+"0",""

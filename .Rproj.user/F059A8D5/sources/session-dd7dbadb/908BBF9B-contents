@@ -1,0 +1,256 @@
+---
+title: "Analysis"
+output: pdf_document
+date: "2023-05-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(gains)
+library(car)
+library(ROCR)
+library(reshape2)
+library(readr)
+library(gridExtra)
+```
+
+
+### 1. Load and explore the data:
+
+Load the dataset using the `read.csv()` function.
+
+```{r}
+application_record <- read_csv("application_record.csv")
+credit_record <- read_csv("credit_record.csv")
+# Join the two data frames by the ID column
+df <- inner_join(application_record , credit_record, by = "ID")
+df |> glimpse()
+```
+
+Display representative portions of the data using functions like `head()`, `tail()`, or `summary()` to get an overview of the data.
+First, Convert all character data type columns to factors.
+
+
+```{r}
+# Convert all character columns to factor
+df = df %>%
+  mutate_if(is.character, as.factor)
+summary(df)
+```
+
+
+Check for missing values using the `is.na()` function and handle them appropriately, such as by imputing missing values or removing rows with missing values.
+
+```{r}
+# Check for missing values and clean the data
+missing_values <- df %>%
+  summarize_all(~ sum(is.na(.)))
+missing_values
+```
+
+There were no missing values for this dataset. Therefore, we move on to visualizing the dataset to inspect for outliers.
+
+Check for outliers by visualizing the distribution of variables using plots like box plots or histograms. Decide on a suitable approach to handle outliers, such as removing them or transforming the data.
+
+Dealing with Outliers in numerical columns.
+
+```{r}
+
+# Filter numerical columns
+num_cols <- df %>%
+  select(where(is.numeric)) %>%
+  names()
+
+# Define a function to handle outliers
+handle_outliers <- function(col) {
+  # Calculate quartiles and IQR
+  q1 <- quantile(col, 0.25)
+  q3 <- quantile(col, 0.75)
+  iqr <- q3 - q1
+  
+  # Define lower and upper bounds for outliers
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  
+  # Replace outliers with NA
+  col <- ifelse(col < lower_bound | col > upper_bound, NA, col)
+  
+  # Return the modified column
+  return(col)
+}
+
+# Handle outliers in each numerical column
+data_outliers_removed <- df %>%
+  mutate(across(num_cols, handle_outliers))
+
+# Display the updated summary of the dataset
+summary(data_outliers_removed)
+
+```
+The selected text describes a process for determining the start month for each credit card applicant based on the `MONTHS_BALANCE` column in the data. Since the data file does not contain information about the credit card open date, the earliest `MONTHS_BALANCE` value is assumed to be the start month for an account. The data is then rearranged so that the status for each month is available starting from month 0 (the start month), month 1 (one month from the start), and so on.
+
+In other words, this code aims to use the `MONTHS_BALANCE` column to determine the start month for each credit card applicant and reorganize the data accordingly.
+
+It is assumed that the data was extracted on January 1st, 2020 and the goal is to determine the calendar start month for each account. Having the calendar account open date could be useful for some analyses.
+
+```{r}
+library(dplyr)
+
+credit_card_first_month <- df %>%
+  group_by(ID) %>%
+  summarize(start_month = min(MONTHS_BALANCE)) %>%
+  ungroup()
+
+head(credit_card_first_month)
+
+```
+
+It is assumed that the data was extracted on January 1st, 2020 and the goal is to determine the calendar start month for each account. Having the calendar account open date could be useful for some analyses.
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+credit_card_first_month <- credit_card_first_month %>%
+  mutate(account_open_month = as.Date("2020-01-01")) %>%
+  mutate(account_open_month = account_open_month + months(start_month)) %>%
+  mutate(account_open_month = format(account_open_month, "%b-%Y"))
+
+credit_card_first_month |> head()
+```
+
+Account 5008804 was opened in October 2018 and account 5008805 was opened in November 2018. The start month column needs to be added to the credit status table.
+
+```{r}
+library(dplyr)
+
+credit_start_status <- left_join(credit_card_first_month, credit_record, by = "ID") %>%
+  mutate(start_month = abs(start_month) + MONTHS_BALANCE)
+
+
+credit_start_status |> head()
+```
+
+The status can be viewed by month since the start and the significance of what has been accomplished. Now, across all acquisition months, portfolio performance can be determined for months 1, 2, 5, 15, and 20 from their respective account open month. The distribution of accounts by status across each month is calculated by first finding the accounts by month and status code.
+
+```{r}
+credit_start_status %>%
+  count(STATUS)
+```
+
+```{r}
+
+accounts_counts <- credit_start_status %>%
+  count(start_month) %>%
+  as_tibble()
+
+ggplot(accounts_counts, aes(x = start_month, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "start_month", y = "Count") +
+  theme_minimal()+ theme_light()
+```
+The goal is to calculate the percentage of bad rate for the entire portfolio across all account open months. This will help determine the period during which the overall bad rate remains stable. It is important to note that only a small number of credit card accounts were opened in the early months and may not be relevant for modeling purposes. The distribution of bad rate for these accounts can be checked.
+
+```{r}
+month_status_counts <- credit_start_status %>%
+  count(start_month, STATUS) %>%
+  rename(counts = n)
+
+month_counts <- credit_start_status %>%
+  count(start_month) %>%
+  rename(month_counts = n)
+
+month_status_pct <- month_status_counts %>%
+  left_join(month_counts, by = "start_month") %>%
+  mutate(status_pct = counts / month_counts * 100) %>%
+  select(start_month, STATUS, status_pct)
+
+```
+
+```{r}
+month_status_pct1 <- month_status_pct %>%
+  pivot_wider(names_from = STATUS, values_from = status_pct) %>%
+  replace(is.na(.), 0) %>%
+  select(-1) %>%
+  mutate(start_month = as.character(start_month))
+```
+
+```{r}
+ggplot(month_status_pct1, aes(x = start_month, y = `4` + `5`)) +
+  geom_line(color = "steelblue", size = 2) +
+  geom_point(color = "steelblue", size = 12) +
+  labs(x = "Months Since Opened", y = "% Bad Rate")
+
+```
+
+
+
+
+
+2. Split the data into training and testing sets:
+   - Use the `sample()` function to randomly split the dataset into a training set (70%) and a testing set (30%).
+   
+```{r}
+# Set the seed for reproducibility
+set.seed(123)
+
+# Split the data into a training set and a testing set
+data_split <- initial_split(df, prop = 0.7)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+
+### 3. Build the logistic regression model:
+Define the formula for the logistic regression model using the `glm()` function.
+Run the model using the training dataset.
+Interpret the results, particularly the p-values, which indicate the significance of each predictor variable in predicting loan approval.
+
+```{r}
+library(forcats)
+
+# Convert STATUS to a factor with two levels: "0" and "1"
+df$STATUS <- fct_other(df$STATUS, keep = c("0", "1"))
+
+# Verify the levels of the modified STATUS variable
+levels(df$STATUS)
+
+# Task 3: Build the Predictive Model (Adjusted)
+
+# Define the formula for the logistic regression model
+formula <- formula(STATUS ~ .)
+
+# Create the logistic regression model
+model <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# Fit the model on the training data
+fit <- fit(model, formula, data = train_data)
+```
+
+
+4. Evaluate the model performance:
+   - Use the `predict()` function to obtain predicted values based on the logistic regression model.
+   - Compare the predicted values with the actual loan approval status using appropriate evaluation metrics such as accuracy, precision, recall, or F1-score.
+   - Identify any significant differences between predicted and actual values and investigate potential reasons for the discrepancies.
+
+5. Validate the model:
+   - Produce a Gain and Lift chart using the `gains` package to assess the model's performance in terms of its predictive power.
+   - Calculate the Variation Inflation Factor (VIF) using the `vif()` function to test for multicollinearity among the predictor variables. If multicollinearity is detected (VIF > 5), consider removing highly correlated variables or applying other techniques to address the issue.
+   - If changes are made to the model based on the VIF analysis, update the formula for the logistic regression model accordingly.
+
+6. Make predictions:
+   - Demonstrate predictions by using the `predict()` function on new, unseen data.
+   - Validate the predictions by calculating the misclassification error, which can be done by comparing the predicted values with the true values and calculating the proportion of misclassified instances.
+   - Interpret the results of the predictions and analyze any potential patterns or insights.
+
+7. Suggestions for improving the model:
+   - Feature engineering: Consider creating new features or transforming existing ones to capture additional information or improve the model's performance.
+   - Handling class imbalance: If the dataset has imbalanced classes, apply techniques such as oversampling, undersampling, or using different evaluation metrics to address the issue.
+   - Model regularization: Explore regularization techniques like L1 or L2 regularization to prevent overfitting and improve generalization.
+   - Ensemble methods: Experiment with ensemble methods such as random forests or gradient boosting to potentially enhance the predictive accuracy of the model.
+
+Remember to refer to the R documentation for specific functions and syntax details.

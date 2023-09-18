@@ -1,0 +1,3 @@
+"0","model_df %>%"
+"0","  count(label) %>%"
+"0","  mutate(percentage = n / sum(n) * 100)"

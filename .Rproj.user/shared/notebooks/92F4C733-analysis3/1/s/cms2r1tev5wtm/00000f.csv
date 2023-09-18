@@ -1,0 +1,3 @@
+"0","model_df <- model_df %>%"
+"0","  mutate(employment_months = ifelse(employment_months < 0, -1, employment_months))"
+"0",""

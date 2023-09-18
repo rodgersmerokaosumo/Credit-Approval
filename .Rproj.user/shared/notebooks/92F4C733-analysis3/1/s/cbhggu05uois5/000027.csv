@@ -1,0 +1,6 @@
+"0","credit_card_first_month <- credit_card_first_month %>%"
+"0","  mutate(account_open_month = as.Date(""2020-01-01"")) %>%"
+"0","  mutate(account_open_month = account_open_month + months(start_month)) %>%"
+"0","  mutate(account_open_month = format(account_open_month, ""%b-%Y""))"
+"0",""
+"0","credit_card_first_month |> head()"

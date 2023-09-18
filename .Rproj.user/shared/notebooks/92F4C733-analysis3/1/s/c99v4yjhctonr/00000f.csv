@@ -1,0 +1,6 @@
+"0","model_df <- inner_join(labels_biased, application_record, by = ""ID"")"
+"0","nrow(model_df)"
+"1","[1]"
+"1"," 1591"
+"1","
+"

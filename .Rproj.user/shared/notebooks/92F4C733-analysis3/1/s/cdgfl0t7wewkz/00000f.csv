@@ -1,0 +1,31 @@
+"0","model_df |> glimpse()"
+"1","Rows: 1,591"
+"1",""
+"1","
+"
+"1","Columns: 19"
+"1",""
+"1","
+"
+"1","$ ID                  [3m[38;5;246m<dbl>[39m[23m 5008827, 5009744, 5009746, 5009749, 500…
+$ label               [3m[38;5;246m<dbl>[39m[23m 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
+$ CODE_GENDER         [3m[38;5;246m<fct>[39m[23m M, F, F, F, F, F, F, F, F, M, M, M, F, …
+$ FLAG_OWN_CAR        [3m[38;5;246m<fct>[39m[23m Y, Y, Y, Y, Y, Y, Y, N, N, Y, Y, Y, Y, …
+$ FLAG_OWN_REALTY     [3m[38;5;246m<fct>[39m[23m Y, N, N, N, N, N, N, N, Y, Y, Y, Y, Y, …
+$ CNT_CHILDREN        [3m[38;5;246m<dbl>[39m[23m 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, …
+$ AMT_INCOME_TOTAL    [3m[38;5;246m<dbl>[39m[23m 180000, 315000, 315000, 315000, 315000,…
+$ NAME_INCOME_TYPE    [3m[38;5;246m<fct>[39m[23m Pensioner, Commercial associate, Commer…
+$ NAME_EDUCATION_TYPE [3m[38;5;246m<fct>[39m[23m Higher education, Higher education, Hig…
+$ NAME_FAMILY_STATUS  [3m[38;5;246m<fct>[39m[23m Married, Married, Married, Married, Mar…
+$ NAME_HOUSING_TYPE   [3m[38;5;246m<fct>[39m[23m House / apartment, House / apartment, H…
+$ DAYS_BIRTH          [3m[38;5;246m<dbl>[39m[23m -18772, -13557, -13557, -13557, -13557,…
+$ DAYS_EMPLOYED       [3m[38;5;246m<dbl>[39m[23m 365243, -586, -586, -586, -586, -586, -…
+$ FLAG_MOBIL          [3m[38;5;246m<dbl>[39m[23m 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
+$ FLAG_WORK_PHONE     [3m[38;5;246m<fct>[39m[23m 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, …
+$ FLAG_PHONE          [3m[38;5;246m<fct>[39m[23m 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, …
+$ FLAG_EMAIL          [3m[38;5;246m<fct>[39m[23m 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, …
+$ OCCUPATION_TYPE     [3m[38;5;246m<fct>[39m[23m NA, NA, NA, NA, NA, NA, NA, NA, NA, Cor…
+$ CNT_FAM_MEMBERS     [3m[38;5;246m<dbl>[39m[23m 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 1, 2, …"
+"1",""
+"1","
+"
